@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>המנוע שמתחת לרגלינו</title>
+<meta name="description" content="יחידת לימוד אינטראקטיבית למורים: מבנה כדור הארץ, תנועת הלוחות, רעידות אדמה, הרי געש וצונאמי — עם הדמיות, תרגול, בוחן ואישור ביצוע.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main id="welcome" class="welcome"></main>
+<div id="app" hidden>
+  <header class="topbar">
+    <div class="brand"><span class="logo" aria-hidden="true"></span><div><strong>המנוע שמתחת לרגלינו</strong><span id="crumb"></span></div></div>
+    <div class="top-actions"><span id="learner" class="learner"></span><button type="button" id="btn-map" class="ghost small">מפת המסע</button><button type="button" id="btn-home" class="ghost small">למסך הפתיחה</button></div>
+    <div class="progress" aria-hidden="true"><div id="progress-bar"></div></div>
+  </header>
+  <div class="screen-no" id="screen-no"></div>
+  <main id="main" tabindex="-1"></main>
+  <nav id="nav" class="nav" aria-label="ניווט בין מסכים"></nav>
+</div>
+<div id="modal" class="modal" hidden></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>
