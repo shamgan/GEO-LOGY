@@ -1,7 +1,10 @@
 import { UNIT, CHAPTERS, EXAM, SUMMARY, SKILLS, LETTERS } from './content.js';
 import { mountSim, SIM_NAMES } from './sims.js';
+import { Tracker, uid } from './tracking.js';
+import { TRACKING } from './config.js';
 
-const CONFIG = { key: 'hive-geology-u1-v1', teacherCode: '74646', practiceWeight: 0.3, examWeight: 0.7, release: '1.0.0' };
+const CONFIG = { key: 'hive-geology-u1-v1', regKey: 'hive-geology-u1-registration', teacherCode: '74646', practiceWeight: 0.3, examWeight: 0.7, release: '1.1.0' };
+const tracker = new Tracker(TRACKING);
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -19,9 +22,9 @@ const FIRST_EXAM = screens.findIndex(s => s.kind === 'examIntro');
 
 // ---------- מצב ושמירה ----------
 let session = null, simHandle = null;
-const load = () => { try { return JSON.parse(localStorage.getItem(CONFIG.key) || 'null'); } catch { return null; } };
+const load = () => { try { const s = JSON.parse(localStorage.getItem(CONFIG.key) || 'null'); if (s && !s.id) s.id = uid(); return s; } catch { return null; } };
 const save = () => { try { if (session && !session.teacher) localStorage.setItem(CONFIG.key, JSON.stringify(session)); } catch {} };
-const newSession = (name, teacher = false) => ({ name, teacher, screen: 1, max: 1, answers: {}, forum: '', board: '', startedAt: new Date().toISOString(), completedAt: null });
+const newSession = (name, teacher = false) => ({ id: uid(), name, teacher, screen: 1, max: 1, answers: {}, forum: '', board: '', startedAt: new Date().toISOString(), completedAt: null });
 
 // ---------- ניקוד ----------
 function practiceScore() {
@@ -63,8 +66,17 @@ function go(i) {
   i = Math.max(1, Math.min(screens.length - 1, i));
   if (!canEnter(i)) return;
   // לאחר תחילת הבוחן אין חזרה לשאלות התרגול
-  session.screen = i; session.max = Math.max(session.max, i); save(); render();
+  const from = session.screen;
+  session.screen = i; session.max = Math.max(session.max, i); save();
+  if (screens[i].kind === 'exam' && screens[from].kind === 'examIntro' && !session.examStartSent) { session.examStartSent = true; save(); track('exam_start'); }
+  track('progress', { from: from + 1 });
+  render();
 }
+// ---------- מעקב ----------
+function track(kind, detail = {}) { if (session && !session.teacher) tracker.enqueue(session, kind, detail); }
+const shareTimers = {};
+function trackShare(field) { clearTimeout(shareTimers[field]); shareTimers[field] = setTimeout(() => track('share', { field, text: session[field].slice(0, 3000) }), 1500); }
+document.addEventListener('simplay', e => { const h = e.target.closest('[data-sim]'); track('interaction', { sim: h ? h.dataset.sim : '' }); });
 function next() { if (!screenDone(session.screen)) return; session.max = Math.max(session.max, session.screen + 1); go(session.screen + 1); }
 function prev() {
   const s = screens[session.screen];
@@ -201,13 +213,14 @@ function question(s, main) {
   main.querySelectorAll('.option').forEach(b => b.onclick = () => {
     const v = +b.dataset.i; const list = session.answers[q.id] = session.answers[q.id] || [];
     if (list.some(x => x.correct) || list.length >= 2) return;
-    list.push({ value: v, correct: v === q.correct, at: new Date().toISOString() }); save(); render();
+    list.push({ value: v, correct: v === q.correct, at: new Date().toISOString() }); save();
+    track('answer', { phase: 'practice', questionId: q.id, attempt: list.length, value: v }); render();
   });
 }
 function forum(s, main) {
   main.innerHTML = `<section class="panel"><div class="eyebrow">${esc(s.chapter.title)}</div><h1>${esc(s.s.title)}</h1>${blocksHTML(s.s.blocks)}
    <label class="write"><span>השיתוף שלי בפורום</span><textarea id="forum-text" rows="6" placeholder="כתבו כאן את הקושי שבחרתם, מה ניסיתם או מה הייתם רוצים לנסות...">${esc(session.forum)}</textarea><small>הטקסט נשמר אוטומטית וייכלל באישור הביצוע.</small></label></section>`;
-  $('#forum-text').oninput = e => { session.forum = e.target.value; save(); renderNav(); };
+  $('#forum-text').oninput = e => { session.forum = e.target.value; save(); trackShare('forum'); renderNav(); };
 }
 function examIntro(s, main) {
   const p = practiceScore();
@@ -226,20 +239,22 @@ function exam(s, main) {
     if (session.answers[q.id]) return;
     const v = +b.dataset.i;
     if (!session.teacher && !confirm(`לנעול את תשובה ${LETTERS[v]}׳? בבוחן יש ניסיון אחד.`)) return;
-    session.answers[q.id] = [{ value: v, correct: v === q.correct, at: new Date().toISOString() }]; save(); render();
+    session.answers[q.id] = [{ value: v, correct: v === q.correct, at: new Date().toISOString() }]; save();
+    track('answer', { phase: 'exam', questionId: q.id, attempt: 1, value: v }); render();
   });
 }
 function summary(s, main) {
   main.innerHTML = `<section class="panel"><div class="eyebrow">סיכום היחידה</div><h1>איפה זה פוגש אותי כמורה?</h1><p class="lead">${esc(SUMMARY.text)}</p>
    <aside class="card board"><h4>לוח שיתופי</h4><p>${esc(SUMMARY.board)}</p></aside>
    <label class="write"><span>התשובה שלי בלוח השיתופי</span><textarea id="board-text" rows="6" placeholder="הפעילות שבחרתי, מה אשנה בה, ובאיזה קושי היא תעזור לתלמידים...">${esc(session.board)}</textarea><small>הטקסט נשמר אוטומטית וייכלל באישור הביצוע.</small></label></section>`;
-  $('#board-text').oninput = e => { session.board = e.target.value; save(); renderNav(); };
+  $('#board-text').oninput = e => { session.board = e.target.value; save(); trackShare('board'); renderNav(); };
 }
 function results(s, main) {
   const g = grade();
   const complete = g.e.done === EXAM.length && g.p.done === PRACTICE.length;
   if (!complete && !session.teacher) { main.innerHTML = `<section class="panel center"><h1>היחידה עדיין לא הושלמה</h1><p>יש להשלים את כל שאלות התרגול והבוחן כדי להפיק אישור ביצוע.</p><button class="primary" id="to-map">למפת המסע</button></section>`; $('#to-map').onclick = () => go(2); return; }
   if (!session.completedAt) { session.completedAt = new Date().toISOString(); save(); }
+  if (!session.completeSent && !session.teacher) { ['forum', 'board'].forEach(f => { if (shareTimers[f]) { clearTimeout(shareTimers[f]); shareTimers[f] = null; track('share', { field: f, text: session[f].slice(0, 3000) }); } }); session.completeSent = true; save(); track('complete', { grade: g.final }); }
   const fb = skillFeedback();
   const date = new Date(session.completedAt).toLocaleDateString('he-IL', { day: 'numeric', month: 'long', year: 'numeric' });
   const mins = Math.max(1, Math.round((Date.parse(session.completedAt) - Date.parse(session.startedAt)) / 60000));
@@ -303,14 +318,27 @@ function welcome() {
   const inp = $('#name'), btn = $('#enter');
   const valid = () => { const v = inp.value.trim(); return v === CONFIG.teacherCode || (v.length >= 2 && /\p{L}/u.test(v)); };
   const upd = () => { btn.disabled = !valid(); if (inp.value.trim() === CONFIG.teacherCode) btn.textContent = 'כניסה במצב מורה ←'; };
-  inp.oninput = upd; upd();
+  // רישום השם כבר בזמן ההקלדה (כמו בלומדות הקודמות), לפני הלחיצה על כניסה
+  let regTimer = null;
+  const register = () => {
+    const v = inp.value.trim().replace(/\s+/g, ' ');
+    if (!valid() || v === CONFIG.teacherCode || (saved && !saved.teacher && saved.name === v)) return null;
+    let reg = null; try { reg = JSON.parse(localStorage.getItem(CONFIG.regKey) || 'null'); } catch {}
+    if (!reg) { reg = newSession(v); tracker.enqueue(reg, 'registration'); }
+    else if (reg.name !== v) { reg.name = v; tracker.enqueue(reg, 'name_update'); }
+    try { localStorage.setItem(CONFIG.regKey, JSON.stringify(reg)); } catch {}
+    return reg;
+  };
+  inp.oninput = () => { upd(); clearTimeout(regTimer); regTimer = setTimeout(register, 450); }; upd();
   $('#enter-form').onsubmit = e => {
     e.preventDefault(); if (!valid()) return;
     const v = inp.value.trim().replace(/\s+/g, ' ');
     if (v === CONFIG.teacherCode) { session = newSession('מורה', true); session.screen = 2; session.max = screens.length - 1; }
     else if (saved && !saved.teacher && saved.name === v) { session = saved; }
     else if (saved && !saved.teacher && saved.max > 2 && !confirm(`נמצאה התקדמות שמורה על שם "${saved.name}". להתחיל מחדש בשם "${v}"? ההתקדמות הקודמת תימחק.`)) return;
-    else session = newSession(v);
+    else { clearTimeout(regTimer); session = register() || newSession(v); session.name = v; session.screen = 1; session.max = 1; }
+    try { localStorage.removeItem(CONFIG.regKey); } catch {}
+    if (!session.teacher && !session.startSent) { session.startSent = true; tracker.enqueue({ ...session, screen: 0 }, 'start'); }
     save(); $('#welcome').hidden = true; $('#app').hidden = false; render();
   };
   if ($('#restart')) $('#restart').onclick = () => { if (confirm('למחוק את ההתקדמות השמורה ולהתחיל מחדש?')) { try { localStorage.removeItem(CONFIG.key); } catch {} welcome(); } };
